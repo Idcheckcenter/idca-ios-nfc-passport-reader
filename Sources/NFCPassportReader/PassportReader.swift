@@ -42,6 +42,8 @@ public class PassportReader : NSObject {
     // By default, Passive Authentication uses the new RFS5652 method to verify the SOD, but can be switched to use
     // the previous OpenSSL CMS verification if necessary
     public var passiveAuthenticationUsesOpenSSL : Bool = false
+    public var openRetryOptions : Bool = false
+    public var dataGroupsToRetry : [DataGroupId] = []
 
     public init( logLevel: LogLevel = .info, masterListURL: URL? = nil ) {
         super.init()
@@ -61,10 +63,9 @@ public class PassportReader : NSObject {
     public func overrideNFCDataAmountToRead( amount: Int ) {
         dataAmountToReadOverride = amount
     }
-    
-    public func readPassport( mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil) async throws -> NFCPassportModel {
-        
-        self.passport = NFCPassportModel()
+
+    public func readPassport(nfcPassportModel: NFCPassportModel?, mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil) async throws -> NFCPassportModel {
+        self.passport = nfcPassportModel ?? NFCPassportModel()
         self.mrzKey = mrzKey
         self.skipCA = skipCA
         self.skipPACE = skipPACE
@@ -369,8 +370,12 @@ extension PassportReader {
                 if errMsg == "Session invalidated" || errMsg == "Class not supported" || errMsg == "Tag connection lost"  {
                     // Check if we have done Chip Authentication, if so, set it to nil and try to redo BAC
                     if self.caHandler != nil {
+                        dataGroupsToRead.forEach { dg in
+                            dataGroupsToRetry.append(dg)
+                        }
                         self.caHandler = nil
                         redoBAC = true
+                        openRetryOptions = true
                     } else {
                         // Can't go any more!
                         throw error
