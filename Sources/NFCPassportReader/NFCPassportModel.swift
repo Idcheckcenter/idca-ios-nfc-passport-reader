@@ -113,6 +113,8 @@ public class NFCPassportModel {
     public private(set) var dataGroupsAvailable = [DataGroupId]()
     public private(set) var dataGroupsRead : [DataGroupId:DataGroup] = [:]
     public private(set) var dataGroupHashes = [DataGroupId: DataGroupHash]()
+    public private(set) var dataGroupsPartiallyRead : [DataGroupId:[UInt8]] = [:]
+    public private(set) var dataGroupsSizes : [DataGroupId:Int] = [:]
 
     public internal(set) var cardAccess : CardAccess?
     public internal(set) var BACStatus : PassportAuthenticationStatus = .notDone
@@ -218,10 +220,19 @@ public class NFCPassportModel {
     }
     
     public func addDataGroup(_ id : DataGroupId, dataGroup: DataGroup ) {
+        if self.dataGroupsPartiallyRead[id] != nil {
+            self.dataGroupsPartiallyRead.removeValue(forKey: id)
+        }
         self.dataGroupsRead[id] = dataGroup
+        self.dataGroupsSizes[id] = dataGroup.data.count
         if id != .COM && id != .SOD {
             self.dataGroupsAvailable.append( id )
         }
+    }
+    
+    public func addPartialDataGroup(_ id : DataGroupId, data: [UInt8], totalSize: Int ) {
+        self.dataGroupsPartiallyRead[id] = data
+        self.dataGroupsSizes[id] = totalSize
     }
 
     public func getDataGroup( _ id : DataGroupId ) -> DataGroup? {

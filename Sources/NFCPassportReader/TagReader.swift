@@ -43,6 +43,14 @@ public class TagReader {
         return try await selectFileAndRead(tag: tag )
     }
     
+    func readDataGroupPartial( dataGroup: DataGroupId, readData: [UInt8], totalSize: Int) async throws -> [UInt8]  {
+        guard let tag = dataGroup.getFileIDTag() else {
+            throw NFCPassportReaderError.UnsupportedDataGroup
+        }
+        
+        return try await selectFileAndReadPartial(tag: tag, readData: readData, totalSize: totalSize )
+    }
+    
     func getChallenge() async throws -> ResponseAPDU{
         let cmd : NFCISO7816APDU = NFCISO7816APDU(instructionClass: 00, instructionCode: 0x84, p1Parameter: 0, p2Parameter: 0, data: Data(), expectedResponseLength: 8)
         
@@ -175,6 +183,7 @@ public class TagReader {
         let (len, o) = try! asn1Length([UInt8](resp.data[1..<4]))
         var remaining = Int(len)
         var amountRead = o + 1
+        let totalSize = remaining
         
         var data = [UInt8](resp.data[..<amountRead])
         
@@ -198,7 +207,92 @@ public class TagReader {
                 data: Data(),
                 expectedResponseLength: readAmount
             )
-            resp = try await self.send( cmd: cmd )
+            
+            do {
+                resp = try await self.send( cmd: cmd )
+            } catch let error as NFCReaderError {
+                switch error.code {
+                    case .readerTransceiveErrorTagResponseError, .readerTransceiveErrorSessionInvalidated, .readerTransceiveErrorTagConnectionLost:
+                        throw NFCPassportReaderError.PartialRead(tag: tag, data: data, totalLength: totalSize, error: error)
+                    default:
+                        throw error
+                }
+            }
+
+            Logger.tagReader.debug( "TagReader - got resp - \(binToHexRep(resp.data, asArray: true)), sw1 : \(resp.sw1), sw2 : \(resp.sw2)" )
+            data += resp.data
+            
+            remaining -= resp.data.count
+            amountRead += resp.data.count
+            Logger.tagReader.debug( "TagReader - Amount of data left to read - \(remaining)" )
+            if (remaining > 0) {
+                usleep(1000)
+            }
+        }
+        
+        return data
+    }
+    
+    func selectFileAndReadPartial( tag: [UInt8], readData: [UInt8], totalSize: Int) async throws -> [UInt8] {
+        var resp = try await selectFile(tag: tag )
+            
+        // Read first 4 bytes of header to see how big the data structure is
+        guard let readHeaderCmd = NFCISO7816APDU(data:Data([0x00, 0xB0, 0x00, 0x00, 0x00, 0x00,0x04])) else {
+            throw NFCPassportReaderError.UnexpectedError
+        }
+        resp = try await self.send( cmd: readHeaderCmd )
+
+        // Header looks like:  <tag><length of data><nextTag> e.g.60145F01 -
+        // the total length is the 2nd value plus the two header 2 bytes
+        // We've read 4 bytes so we now need to read the remaining bytes from offset 4
+        let (len, o) = try! asn1Length([UInt8](resp.data[1..<4]))
+        var remaining = Int(len)
+        var amountRead = o + 1
+        let totalSize = remaining
+        
+        var data = [UInt8](resp.data[..<amountRead])
+        let prevFirstData = readData[0...(min(readData.count, data.count) - 1)]
+        // If the previous data starts with the same data, inject previously read data and skip ahead in reading the chip
+        if (data.elementsEqual(prevFirstData)) {
+            let amountAvailableToInject = min(remaining, readData.count) - data.count
+            if (amountAvailableToInject > 0) {
+                remaining -= amountAvailableToInject
+                amountRead += amountAvailableToInject
+                data += readData[data.count...(amountAvailableToInject + data.count - 1)]
+            }
+        }
+        
+        Logger.tagReader.debug( "TagReader - Number of data bytes to read - \(remaining)" )
+        
+        var readAmount : Int = maxDataLengthToRead
+        while remaining > 0 {
+            if maxDataLengthToRead != 256 && remaining < maxDataLengthToRead {
+                readAmount = remaining
+            }
+
+            self.progress?( Int(Float(amountRead) / Float(remaining+amountRead ) * 100))
+            let offset = intToBin(amountRead, pad:4)
+
+            Logger.tagReader.debug( "TagReader - data bytes remaining: \(remaining), will read : \(readAmount)" )
+            let cmd = NFCISO7816APDU(
+                instructionClass: 00,
+                instructionCode: 0xB0,
+                p1Parameter: offset[0],
+                p2Parameter: offset[1],
+                data: Data(),
+                expectedResponseLength: readAmount
+            )
+            
+            do {
+                resp = try await self.send( cmd: cmd )
+            } catch let error as NFCReaderError {
+                switch error.code {
+                    case .readerTransceiveErrorSessionInvalidated, .readerTransceiveErrorTagConnectionLost:
+                        throw NFCPassportReaderError.PartialRead(tag: tag, data: data, totalLength: totalSize, error: error)
+                    default:
+                        throw error
+                }
+            }
 
             Logger.tagReader.debug( "TagReader - got resp - \(binToHexRep(resp.data, asArray: true)), sw1 : \(resp.sw1), sw2 : \(resp.sw2)" )
             data += resp.data
@@ -207,7 +301,6 @@ public class TagReader {
             amountRead += resp.data.count
             Logger.tagReader.debug( "TagReader - Amount of data left to read - \(remaining)" )
         }
-        
         return data
     }
 
