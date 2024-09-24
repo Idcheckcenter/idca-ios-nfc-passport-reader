@@ -63,9 +63,12 @@ public class PassportReader : NSObject {
         dataAmountToReadOverride = amount
     }
     
-    public func readPassport( mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, useExtendedMode : Bool = false, useExtendedMode : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil) async throws -> NFCPassportModel {
-        
-        self.passport = NFCPassportModel()
+    public func readPassport( mrzKey : String, tags : [DataGroupId] = [], skipSecureElements : Bool = true, skipCA : Bool = false, skipPACE : Bool = false, useExtendedMode : Bool = false, customDisplayMessage : ((NFCViewDisplayMessage) -> String?)? = nil, nfcPassportModel: NFCPassportModel? = nil) async throws -> NFCPassportModel {
+        if (nfcPassportModel === nil) {
+            self.passport = NFCPassportModel()
+        } else {
+            self.passport = nfcPassportModel!
+        }
         self.mrzKey = mrzKey
         self.skipCA = skipCA
         self.skipPACE = skipPACE
@@ -275,8 +278,17 @@ extension PassportReader {
 
         let challenge = generateRandomUInt8Array(8)
         Logger.passportReader.debug( "Generated Active Authentication challange - \(binToHexRep(challenge))")
-        let response = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: useExtendedMode)
-        self.passport.verifyActiveAuthentication( challenge:challenge, signature:response.data )
+        let responseShort = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: false)
+        if (useExtendedMode) {
+            let responseExtended = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: true)
+            if (responseExtended.data.count > responseShort.data.count) {
+                self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseExtended.data )
+            } else {
+                self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseShort.data )
+            }
+        } else {
+            self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseShort.data )
+        }
     }
     
 
