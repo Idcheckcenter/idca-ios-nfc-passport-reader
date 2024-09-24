@@ -280,10 +280,14 @@ extension PassportReader {
         Logger.passportReader.debug( "Generated Active Authentication challange - \(binToHexRep(challenge))")
         let responseShort = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: false)
         if (useExtendedMode) {
-            let responseExtended = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: true)
-            if (responseExtended.data.count > responseShort.data.count) {
-                self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseExtended.data )
-            } else {
+            do {
+                let responseExtended = try await tagReader.doInternalAuthentication(challenge: challenge, useExtendedMode: true)
+                if (responseExtended.data.count > responseShort.data.count) {
+                    self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseExtended.data )
+                } else {
+                    self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseShort.data )
+                }
+            } catch {
                 self.passport.verifyActiveAuthentication( challenge:challenge, signature:responseShort.data )
             }
         } else {
