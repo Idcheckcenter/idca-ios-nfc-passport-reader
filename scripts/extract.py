@@ -44,7 +44,7 @@ def main( filename ):
         try:
             extractCertsFromMasterlist( ml )
         except Exception as e:
-            print( "Error extracting certs from masterlist") 
+            print( f"Error extracting certs from masterlist - {e}") 
             print( "Skipping this masterlist - certs from this list will not be included.")
 
     print( "====================================" )
@@ -65,12 +65,15 @@ def readAndExtractLDIFFile( file ):
             elif line.startswith( "pkdMasterListContent:: "):
                 cert = line[23:]
                 adding = True
-            elif not line.startswith(" ") and adding == True:
+            elif line.startswith( "pkdMasterListContent;binary:: "):
+                cert = line[27:]
+                adding = True
+            elif not line.startswith(" ") and adding:
                 adding = False
                 certs.append( cert )
                 cns.append( cn )
                 cert = ""
-            elif adding == True:
+            elif adding:
                 cert += line
         if cert != "":
             certs.append( cert )

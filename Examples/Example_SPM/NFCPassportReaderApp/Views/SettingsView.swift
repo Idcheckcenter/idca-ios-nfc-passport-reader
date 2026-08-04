@@ -20,7 +20,15 @@ struct SettingsView: View {
                 Toggle(isOn: $settings.useNewVerificationMethod) {
                     Text("Use new Passive Authentication")
                 }
-                .padding(.bottom)
+                Toggle(isOn: $settings.useExtendedMode) {
+                    Text("Use new Extended mode for reading")
+                }
+                Toggle(isOn: $settings.skipPACE) {
+                    Text("Skip PACE authentication - use BAC only")
+                }
+                Toggle(isOn: $settings.skipCA) {
+                    Text("Skip CA Authentication")
+                }
                 VStack {
                     Toggle(isOn: $settings.savePassportOnScan) {
                         Text("Save passport on scan & import")

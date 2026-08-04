@@ -30,8 +30,9 @@ public enum NFCPassportReaderError: Error {
     case NotImplemented
     case TagNotValid
     case ConnectionError
-    case PartialRead(tag:[UInt8], data:[UInt8], totalLength:Int, error: Error)
     case SystemIsBusy
+    case PartialRead(tag:[UInt8], data:[UInt8], totalLength:Int, error: Error)
+    case TimeOutError
     case UserCanceled
     case InvalidMRZKey
     case MoreThanOneTagFound
@@ -69,6 +70,7 @@ public enum NFCPassportReaderError: Error {
             case .PartialRead(let tag, let data, let totalLength, _):
                 return "PartialRead of \(tag). Read \(data.count) of \(totalLength)"
             case .SystemIsBusy: return "SystemIsBusy"
+            case .TimeOutError: return "TimeOutError"
             case .UserCanceled: return "UserCanceled"
             case .InvalidMRZKey: return "InvalidMRZKey"
             case .MoreThanOneTagFound: return "MoreThanOneTagFound"

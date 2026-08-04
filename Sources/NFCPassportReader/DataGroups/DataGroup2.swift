@@ -12,6 +12,13 @@ import UIKit
 
 @available(iOS 13, macOS 10.15, *)
 public class DataGroup2 : DataGroup {
+    private enum FaceImageFormat {
+        case jpeg
+        case jp2
+        case jpeg2000Codestream
+    }
+    
+    
     public private(set) var nrImages : Int = 0
     public private(set) var versionNumber : Int = 0
     public private(set) var lengthOfRecord : Int = 0
@@ -34,11 +41,11 @@ public class DataGroup2 : DataGroup {
     public private(set) var deviceType : Int = 0
     public private(set) var quality : Int = 0
     public private(set) var imageData : [UInt8] = []
-
+    
     public override var datagroupType: DataGroupId { .DG2 }
-
+    
 #if !os(macOS)
-func getImage() -> UIImage? {
+    func getImage() -> UIImage? {
         if imageData.count == 0 {
             return nil
         }
@@ -47,12 +54,13 @@ func getImage() -> UIImage? {
         return image
     }
 #endif
-
+    
     required init( _ data : [UInt8] ) throws {
         try super.init(data)
     }
-
+    
     override func parse(_ data: [UInt8]) throws {
+        
         var tag = try getNextTag()
         try verifyTag(tag, equals: 0x7F61)
         _ = try getNextLength()
@@ -77,6 +85,7 @@ func getImage() -> UIImage? {
         try verifyTag(tag, oneOf: [0x5F2E, 0x7F2E])
         let value = try getNextValue()
         
+        
         try parseISO19794_5( data:value )
     }
     
@@ -100,6 +109,7 @@ func getImage() -> UIImage? {
         
         facialRecordDataLength = binToInt(data[offset..<offset+4])
         offset += 4
+
         nrFeaturePoints = binToInt(data[offset..<offset+2])
         offset += 2
         gender = binToInt(data[offset..<offset+1])
@@ -143,21 +153,125 @@ func getImage() -> UIImage? {
         // Make sure that the image data at least has a valid header
         // Either JPG or JPEG2000
         
+        
+        imageData = try extractFaceImageData(
+            from: data,
+            offset: offset
+        )
+    }
+    
+    private func extractFaceImageData(from data: [UInt8], offset: Int) throws -> [UInt8] {
         let jpegHeader : [UInt8] = [0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46]
         let jpeg2000BitmapHeader : [UInt8] = [0x00,0x00,0x00,0x0c,0x6a,0x50,0x20,0x20,0x0d,0x0a]
         let jpeg2000CodestreamBitmapHeader : [UInt8] = [0xff,0x4f,0xff,0x51]
         
-        if data.count < offset+jpeg2000CodestreamBitmapHeader.count {
-            throw NFCPassportReaderError.UnknownImageFormat
-        }
-
+        let remaining = Array(data[offset...])
         
-        if [UInt8](data[offset..<offset+jpegHeader.count]) != jpegHeader &&
-            [UInt8](data[offset..<offset+jpeg2000BitmapHeader.count]) != jpeg2000BitmapHeader &&
-            [UInt8](data[offset..<offset+jpeg2000CodestreamBitmapHeader.count]) != jpeg2000CodestreamBitmapHeader {
-            throw NFCPassportReaderError.UnknownImageFormat
+        // Check for JPEG Image
+        if remaining.starts(with: jpegHeader) {
+            guard let end = findJPEGEnd(in: remaining) else {
+                throw NFCPassportReaderError.UnknownImageFormat
+            }
+            return Array(remaining[..<end])
         }
         
-        imageData = [UInt8](data[offset...])
+        // Check for jpeg2000CodestreamBitmapHeader
+        if remaining.starts(with: jpeg2000CodestreamBitmapHeader) {
+            guard let end = findJPEG2000CodestreamEnd(in: remaining) else {
+                throw NFCPassportReaderError.UnknownImageFormat
+            }
+            return Array(remaining[..<end])
+        }
+        
+        // Check for JPEG2000Bitmap
+        if remaining.starts(with: jpeg2000BitmapHeader) {
+            let maxEnd = data.count
+            return try extractJP2BoxData(from: data, offset: offset, maxEnd: maxEnd)
+        }
+        
+        throw NFCPassportReaderError.UnknownImageFormat
+    }
+    
+    private func extractJP2BoxData(from data: [UInt8], offset: Int, maxEnd: Int) throws -> [UInt8] {
+        var p = offset
+        
+        while p + 8 <= maxEnd {
+            let boxStart = p
+            let length = binToInt(data[p..<p + 4])
+            p += 4
+            
+            let boxType = Array(data[p..<p + 4])
+            p += 4
+            
+            let boxEnd: Int
+            
+            if length == 0 {
+                // Box extends to end of containing data
+                boxEnd = maxEnd
+            } else if length == 1 {
+                // XLBox: 64-bit box length
+                guard p + 8 <= maxEnd else {
+                    throw NFCPassportReaderError.UnknownImageFormat
+                }
+                
+                let largeLength = binToInt64(data[p..<p + 8])
+                p += 8
+                
+                guard largeLength >= 16 else {
+                    throw NFCPassportReaderError.UnknownImageFormat
+                }
+                
+                boxEnd = boxStart + Int(largeLength)
+            } else {
+                guard length >= 8 else {
+                    throw NFCPassportReaderError.UnknownImageFormat
+                }
+                
+                boxEnd = boxStart + length
+            }
+            
+            guard boxEnd <= maxEnd else {
+                throw NFCPassportReaderError.UnknownImageFormat
+            }
+            
+            p = boxEnd
+            
+            // jp2c box: this is the codestream box.
+            // Once we have consumed it, the JP2 image is complete.
+            if boxType == [0x6A, 0x70, 0x32, 0x63] {
+                return Array(data[offset..<boxEnd])
+            }
+        }
+        
+        throw NFCPassportReaderError.UnknownImageFormat
+    }
+    
+    private func findJPEGEnd(in data: [UInt8]) -> Int? {
+        guard data.count >= 2 else { return nil }
+        
+        // Go backwards to find end of file marker
+        
+        for i in stride(from: data.count - 2, through: 0, by: -1) {
+            if data[i] == 0xFF && data[i + 1] == 0xD9 {
+                return i + 2
+            }
+        }
+        
+        return nil
+    }
+    
+    private func findJPEG2000CodestreamEnd(in data: [UInt8]) -> Int? {
+        // JPEG2000 codestream EOC marker
+        return findJPEGEnd(in: data)
+    }
+    
+    private func binToInt64(_ slice: ArraySlice<UInt8>) -> UInt64 {
+        var value: UInt64 = 0
+        
+        for byte in slice {
+            value = (value << 8) | UInt64(byte)
+        }
+        
+        return value
     }
 }
